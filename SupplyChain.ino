@@ -12,11 +12,11 @@
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);   // Create MFRC522 instance
 LiquidCrystal_I2C lcd(0x3f, 16, 2); // Create Lcd monitor instance
-SoftwareSerial bluetooth(RX_PIN, TX_PIN, false); // Create bluetooth module instance
+SoftwareSerial bluetooth(RX_PIN, TX_PIN, false); // Create bluetooth instance
 
-char buf[48];
-int chainPos = 0;
-char chainNode[16] = "Production";
+char buf[48];                       // Message buffer
+int chainPos = 0;                   // Supply chain position
+char chainNode[16] = "Production";  // Supply chain node
 long debouncing_time = 150; 
 volatile unsigned long last_micros;
  
@@ -31,7 +31,7 @@ void setup() {
   lcd.backlight();
   lcd.setCursor(0, 0);
   lcd.print(chainNode);
-  bluetooth.begin(4800);
+  bluetooth.begin(4800);            // Init bluetooth module
   pinMode(2, INPUT_PULLUP);
   // Prepare key - all keys are set to FFFFFFFFFFFFh at chip delivery from the factory.
   for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
@@ -57,36 +57,30 @@ void loop() {
  */
 void TaskReadCard(void *pvParameters) {
   (void) pvParameters;
+  char uid[9] = "";
+  byte nib1, nib2;
     
-  for (;;) // A Task shall never return or exit.
-  {  
-    // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
+  for (;;) {
+    // Reset the loop if no new card present on the sensor/reader
     if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
-      strcpy(buf, "{node:");
-      strcat(buf, chainNode);
-      strcat(buf, ", obj:");
       for (byte i = 0; i < mfrc522.uid.size; i++) {
-        strcat(buf, mfrc522.uid.uidByte[i]);
+        nib1 = (mfrc522.uid.uidByte[i] >> 4) & 0x0F;
+        nib2 = (mfrc522.uid.uidByte[i] >> 0) & 0x0F;
+        uid[i*2+0] = nib1  < 0xA ? '0' + nib1  : 'A' + nib1  - 0xA;
+        uid[i*2+1] = nib2  < 0xA ? '0' + nib2  : 'A' + nib2  - 0xA;
       }
-      strcat(buf, "}");
+      uid[mfrc522.uid.size*2] = '\0';
       
+      strcpy(buf, "{node:\"");
+      strcat(buf, chainNode);
+      strcat(buf, "\", obj:\"");
+      strcat(buf, uid);
+      strcat(buf, "\"}");
       bluetooth.println(buf);
-      delay(1000); //change value if you want to read cards faster
     
       mfrc522.PICC_HaltA();
       mfrc522.PCD_StopCrypto1();
     }
-  }
-}
-
-void interruptHandler() {
-  xSemaphoreGiveFromISR(interruptSemaphore, NULL);
-}
-
-void debounceInterrupt() {
-  if((long)(micros() - last_micros) >= debouncing_time * 1000) {
-    interruptHandler();
-    last_micros = micros();
   }
 }
 
@@ -111,5 +105,16 @@ void TaskChainNode(void *pvParameters) {
       lcd.clear();
       lcd.print(chainNode);
     }
+  }
+}
+
+void interruptHandler() {
+  xSemaphoreGiveFromISR(interruptSemaphore, NULL);
+}
+
+void debounceInterrupt() {
+  if((long)(micros() - last_micros) >= debouncing_time * 1000) {
+    interruptHandler();
+    last_micros = micros();
   }
 }
