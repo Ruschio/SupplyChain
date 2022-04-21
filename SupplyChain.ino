@@ -17,11 +17,14 @@ SoftwareSerial bluetooth(RX_PIN, TX_PIN, false); // Create bluetooth instance
 char buf[48];                       // Message buffer
 int chainPos = 0;                   // Supply chain position
 char chainNode[16] = "Production";  // Supply chain node
-long debouncing_time = 150; 
+long debouncing_time = 150;
 volatile unsigned long last_micros;
- 
+bool interrupt = false;
+
 MFRC522::MIFARE_Key key;
 SemaphoreHandle_t interruptSemaphore;
+
+TaskHandle_t TaskHandle;
 
 /*
  *  INIT SETUP
@@ -36,7 +39,8 @@ void setup() {
   // Prepare key - all keys are set to FFFFFFFFFFFFh at chip delivery from the factory.
   for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
   xTaskCreate(TaskReadCard, "ReadCard", 128, NULL, 0, NULL);
-  xTaskCreate(TaskChainNode, "ChainNode", 180, NULL, 0, NULL);
+  xTaskCreate(TaskChainNode, "ChainNode", 180, NULL, 0, &TaskHandle);
+  vTaskSuspend(TaskHandle);
   interruptSemaphore = xSemaphoreCreateBinary();
   if (interruptSemaphore != NULL) {
     attachInterrupt(digitalPinToInterrupt(2), debounceInterrupt, LOW);
@@ -50,6 +54,10 @@ void setup() {
  *  MAIN LOOP
  */
 void loop() {
+  if (digitalRead(2) == HIGH && interrupt == true) {
+    interrupt = false;
+    attachInterrupt(digitalPinToInterrupt(2), debounceInterrupt, LOW);
+  }
 }
 
 /*
@@ -90,31 +98,25 @@ void TaskReadCard(void *pvParameters) {
 void TaskChainNode(void *pvParameters) {
   (void) pvParameters;
   for (;;) {
-    if (xSemaphoreTake(interruptSemaphore, portMAX_DELAY) == pdPASS) {
-      chainPos = (chainPos + 1) % 4;
-      switch (chainPos) {
-        case 0:
-          strcpy(chainNode, "Production"); break;
-        case 1:
-          strcpy(chainNode, "Warehouse"); break;
-        case 2:
-          strcpy(chainNode, "Distribution"); break;
-        case 3:
-          strcpy(chainNode, "Delivery"); break;
-      }
-      lcd.clear();
-      lcd.print(chainNode);
+    chainPos = (chainPos + 1) % 4;
+    switch (chainPos) {
+      case 0:
+        strcpy(chainNode, "Production"); break;
+      case 1:
+        strcpy(chainNode, "Warehouse"); break;
+      case 2:
+        strcpy(chainNode, "Distribution"); break;
+      case 3:
+        strcpy(chainNode, "Delivery"); break;
     }
+    lcd.clear();
+    lcd.print(chainNode);
+    vTaskSuspend(TaskHandle);
   }
-}
-
-void interruptHandler() {
-  xSemaphoreGiveFromISR(interruptSemaphore, NULL);
 }
 
 void debounceInterrupt() {
-  if((long)(micros() - last_micros) >= debouncing_time * 1000) {
-    interruptHandler();
-    last_micros = micros();
-  }
+  interrupt = true;
+  detachInterrupt(digitalPinToInterrupt(2));
+  xTaskResumeFromISR(TaskHandle);
 }
